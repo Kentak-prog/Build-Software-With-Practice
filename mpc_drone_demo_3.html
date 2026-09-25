@@ -94,6 +94,19 @@ Prediction Horizon N:
 <br><br>
 
 <label>
+Target Altitude:
+<span id="targetZVal" class="value">8</span>
+</label>
+
+<input
+type="range"
+id="Z"
+min="0"
+max="12"
+step="0.1"
+value="8">
+<label>
+
 Run Name:
 </label>
 
@@ -121,10 +134,12 @@ Saved Runs:
 <hr>
 
 <p><b>X Position:</b> <span id="posXText">0</span></p>
-<p><b>Altitude:</b> <span id="posYText">0</span></p>
+<p><b>Y Position:</b> <span id="posYText">0</span></p>
+<p><b>Z Position:</b><span id="posZText">0</span></p>
 
 <p><b>Target X:</b> <span id="targetXText">10</span></p>
 <p><b>Target Y:</b> <span id="targetYText">10</span></p>
+<p><b>Target Z:</b><span id="targetZText">8</span></p>
 
 <p><b>Speed:</b> <span id="velText">0</span></p>
 <p><b>Control Effort:</b> <span id="uText">0</span></p>
@@ -150,14 +165,17 @@ const dt = 0.1;
 // Drone states
 let x = 1;
 let y = 1;
+let z = 1;
 
 let vx = 0;
 let vy = 0;
+let vz = 0;
 
 
 // Target
 let targetX = 10;
 let targetY = 10;
+let targetZ = 8;
 
 // Display
 let lastU = 0;
@@ -178,18 +196,22 @@ const qSlider = document.getElementById("Q");
 const qvSlider = document.getElementById("Qv");
 const rSlider = document.getElementById("R");
 const nSlider = document.getElementById("N");
+const zSlider = document.getElementById("Z");
 
 function updateLabels(){
     qVal.textContent = qSlider.value;
     qvVal.textContent = qvSlider.value;
     rVal.textContent = rSlider.value;
     nVal.textContent = nSlider.value;
+    targetZVal.textContent = zSlider.value;
+    targetZ = Number(zSlider.value);
 }
 
 qSlider.oninput = updateLabels;
 qvSlider.oninput = updateLabels;
 rSlider.oninput = updateLabels;
 nSlider.oninput = updateLabels;
+zSlider.oninput = updateLabels;
 
 updateLabels();
 
@@ -227,9 +249,11 @@ function resetSim(){
 
     x = 1;
     y = 1;
+    z = 1;
 
     vx = 0;
     vy = 0;
+    vz = 0;
 
     altitudeHistory = [];
     droneTrail = [];
@@ -242,80 +266,128 @@ function disturb(){
     // Simulated wind gust
     vx += 2;
     vy -= 2;
+    vz += 1;
 }
 
 function computeMPC(){
 
-    const Q = Number(qSlider.value);
-    const Qv = Number(qvSlider.value);
-    const R = Number(rSlider.value);
-    const N = Number(nSlider.value);
+    const Q =
+        Number(qSlider.value);
 
-    let bestCost = Infinity;
+    const Qv =
+        Number(qvSlider.value);
 
-    let bestUx = 0;
-    let bestUy = 0;
+    const R =
+        Number(rSlider.value);
 
-    for(let ux=-3; ux<=3; ux+=0.5){
+    const N =
+        Number(nSlider.value);
 
-        for(let uy=-3; uy<=3; uy+=0.5){
+    let bestCost =
+        Infinity;
 
-            let xp = x;
-            let yp = y;
+    let bestControl = {
 
-            let vxp = vx;
-            let vyp = vy;
+        ux:0,
+        uy:0,
+        uz:0
+    };
 
-            let cost = 0;
+    for(let ux=-2; ux<=2; ux+=0.5){
 
-            for(let k=0; k<N; k++){
+        for(let uy=-2; uy<=2; uy+=0.5){
 
-                xp += vxp * dt;
-                yp += vyp * dt;
+            for(let uz=-2; uz<=2; uz+=0.5){
 
-                vxp += ux * dt;
-                vyp += uy * dt;
+                let xp = x;
+                let yp = y;
+                let zp = z;
 
-                cost +=
+                let vxp = vx;
+                let vyp = vy;
+                let vzp = vz;
 
-                    Q * (
-                        Math.pow(targetX - xp,2)
+                let cost = 0;
+
+                for(let k=0;k<N;k++){
+
+                    vxp += ux*dt;
+                    vyp += uy*dt;
+                    vzp += uz*dt;
+
+                    xp += vxp*dt;
+                    yp += vyp*dt;
+                    zp += vzp*dt;
+
+                    cost +=
+
+                        Q * (
+
+                            (targetX-xp)**2
+
+                            +
+
+                            (targetY-yp)**2
+
+                            +
+
+                            (targetZ-zp)**2
+
+                        )
+
                         +
-                        Math.pow(targetY - yp,2)
-                    )
 
-                    +
+                        Qv * (
 
-                    Qv * (
-                        Math.pow(vxp,2)
+                            vxp*vxp
+
+                            +
+
+                            vyp*vyp
+
+                            +
+
+                            vzp*vzp
+
+                        )
+
                         +
-                        Math.pow(vyp,2)
-                    )
 
-                    +
+                        R * (
 
-                    R * (
-                        Math.pow(ux,2)
-                        +
-                        Math.pow(uy,2)
-                    );
-            }
+                            ux*ux
 
-            if(cost < bestCost){
+                            +
 
-                bestCost = cost;
+                            uy*uy
 
-                bestUx = ux;
-                bestUy = uy;
+                            +
+
+                            uz*uz
+
+                        );
+                }
+
+                if(cost < bestCost){
+
+                    bestCost = cost;
+
+                    bestControl = {
+
+                        ux:ux,
+
+                        uy:uy,
+
+                        uz:uz
+                    };
+                }
             }
         }
     }
 
-    return {
-        ux: bestUx,
-        uy: bestUy
-    };
+    return bestControl;
 }
+
 
 function drawDrone(px, py){
 
@@ -330,14 +402,15 @@ function drawDrone(px, py){
 
     // motors
     ctx.beginPath();
-    ctx.arc(px - 15, py, 4, 0, Math.PI*2);
-    ctx.arc(px + 15, py, 4, 0, Math.PI*2);
+    ctx.arc(px - 15, py, 4, 0, Math.PI * 2);
+    ctx.arc(px + 15, py, 4, 0, Math.PI * 2);
+
     ctx.fillStyle = "dodgerblue";
     ctx.fill();
 
     // prop guards
-    ctx.strokeRect(px-20, py-5, 10, 10);
-    ctx.strokeRect(px+10, py-5, 10, 10);
+    ctx.strokeRect(px - 20, py - 5, 10, 10);
+    ctx.strokeRect(px + 10, py - 5, 10, 10);
 }
 
 function draw(){
@@ -354,7 +427,42 @@ function draw(){
     const worldH = 220;
 
     ctx.strokeStyle = "black";
-    ctx.strokeRect(worldX, worldY, worldW, worldH);
+    // Front face
+    ctx.strokeStyle = "black";
+
+    ctx.strokeRect(
+        worldX,
+        worldY,
+        worldW,
+        worldH
+    );
+
+// Back face
+
+ctx.strokeRect(
+    worldX + 80,
+    worldY - 50,
+    worldW,
+    worldH
+);
+
+// Connecting edges
+
+ctx.beginPath();
+
+ctx.moveTo(worldX,worldY);
+ctx.lineTo(worldX+80,worldY-50);
+
+ctx.moveTo(worldX+worldW,worldY);
+ctx.lineTo(worldX+worldW+80,worldY-50);
+
+ctx.moveTo(worldX,worldY+worldH);
+ctx.lineTo(worldX+80,worldY+worldH-50);
+
+ctx.moveTo(worldX+worldW,worldY+worldH);
+ctx.lineTo(worldX+worldW+80,worldY+worldH-50);
+
+ctx.stroke();
 
     function mapX(v){
         return worldX + (v/12) * worldW;
@@ -367,7 +475,7 @@ function draw(){
     // grid
     ctx.strokeStyle = "#dddddd";
 
-    for(let i=0;i<=12;i++){
+   /* for(let i=0;i<=12;i++){
 
         const gx = worldX + i*(worldW/12);
 
@@ -376,8 +484,8 @@ function draw(){
         ctx.lineTo(gx,worldY+worldH);
         ctx.stroke();
     }
-
-    for(let i=0;i<=12;i++){
+    */
+    /*for(let i=0;i<=12;i++){
 
         const gy = worldY + i*(worldH/12);
 
@@ -386,15 +494,17 @@ function draw(){
         ctx.lineTo(worldX+worldW,gy);
         ctx.stroke();
     }
+    */
+
     //----------------------------------
     // Drone Trail
     //----------------------------------
 
     const speedMagnitude =
-    Math.sqrt(vx*vx + vy*vy);
+    Math.sqrt(vx*vx + vy*vy + vz*vz);
 
     let redAmount =
-    Math.min(255, speedMagnitude * 40);
+    Math.min(255, (z/12)*255);
 
     let blueAmount =
     255 - Math.min(200, speedMagnitude * 25);
@@ -407,8 +517,8 @@ function draw(){
 
     for(let i=0;i<droneTrail.length;i++){
 
-    const trailX = mapX(droneTrail[i].x);
-    const trailY = mapY(droneTrail[i].y);
+    const trailX = mapX(droneTrail[i].x) + droneTrail[i].z * 12;
+    const trailY = mapY(droneTrail[i].y) - droneTrail[i].z * 8;
 
     if(i===0){
         ctx.moveTo(trailX,trailY);
@@ -420,8 +530,8 @@ function draw(){
 
 ctx.stroke();
     // Target
-    const tx = mapX(targetX);
-    const ty = mapY(targetY);
+    const tx = mapX(targetX) + targetZ*12;
+    const ty = mapY(targetY) - targetZ*8;
 
     ctx.strokeStyle = "red";
     ctx.lineWidth = 3;
@@ -438,8 +548,8 @@ ctx.stroke();
     ctx.fillText("Target",tx+12,ty);
 
     // Drone
-    const droneX = mapX(x);
-    const droneY = mapY(y);
+    const droneX = mapX(x) + z*12;
+    const droneY = mapY(y) - z*8;
 
     drawDrone(droneX,droneY);
     //----------------------------------
@@ -453,8 +563,8 @@ ctx.stroke();
     ctx.moveTo(droneX, droneY);
 
     ctx.lineTo(
-    droneX + vx * 20,
-    droneY - vy * 20
+    droneX + vx * 50 + vz * 10,
+    droneY - vy * 50 - vz * 6
     );
 
     ctx.stroke();
@@ -463,7 +573,7 @@ ctx.stroke();
     ctx.fillText(
     "Velocity",
     droneX + vx * 20 + 5,
-    droneY - vy * 20
+    droneY - vy * 20 - 5
     );
 
     //----------------------------------
@@ -488,7 +598,7 @@ ctx.stroke();
     const targetLineY =
         graphY +
         graphH -
-        (targetY/12)*graphH;
+        (targetZ/12)*graphH;
 
     ctx.strokeStyle="red";
 
@@ -589,25 +699,34 @@ ctx.stroke();
     document.getElementById("posYText")
         .textContent = y.toFixed(2);
 
+    document.getElementById("posZText")
+        .textContent = z.toFixed(2);
+
     const speed =
-        Math.sqrt(vx*vx + vy*vy);
+        Math.sqrt(vx*vx + vy*vy + vz*vz);
 
     document.getElementById("velText")
         .textContent = speed.toFixed(2);
 
     document.getElementById("uText")
         .textContent = lastU.toFixed(2);
+
     document.getElementById("targetXText")
     .textContent = targetX.toFixed(2);
 
     document.getElementById("targetYText")
     .textContent = targetY.toFixed(2);
 
+    document.getElementById("targetZText")
+    .textContent = targetZ.toFixed(2);
+
 const error =
     Math.sqrt(
         (targetX-x)*(targetX-x)
         +
         (targetY-y)*(targetY-y)
+        +
+        (targetZ-z)*(targetZ-z)
     );
 
     document.getElementById("errorText")
@@ -620,21 +739,24 @@ const error =
 function update(){
     effortHistory.push(lastU);
 
-if(effortHistory.length > maxHistory){
+ if(effortHistory.length > maxHistory){
     effortHistory.shift();
-}
+ }
 
     const control = computeMPC();
 
     vx += control.ux * dt;
     vy += control.uy * dt;
+    vz += control.uz * dt;
 
     x += vx * dt;
     y += vy * dt;
+    z += vz * dt;
 
     droneTrail.push({
     x:x,
-    y:y
+    y:y,
+    z:z
 });
 
 if(droneTrail.length > maxTrail){
@@ -643,10 +765,12 @@ if(droneTrail.length > maxTrail){
 
     x = Math.max(0, Math.min(12, x));
     y = Math.max(0, Math.min(12, y));
+    z = Math.max(0,Math.min(12,z));
 
     lastU = Math.sqrt(
         control.ux*control.ux +
-        control.uy*control.uy
+        control.uy*control.uy +
+        control.uz*control.uz
     );
 
     const currentError =
@@ -654,6 +778,8 @@ if(droneTrail.length > maxTrail){
         (targetX-x)*(targetX-x)
         +
         (targetY-y)*(targetY-y)
+        +
+        (targetZ-z)*(targetZ-z)
     );
 
 if(currentError > maxError){
@@ -662,7 +788,7 @@ if(currentError > maxError){
 
     cumulativeEffort += lastU;
 
-    altitudeHistory.push(y);
+    altitudeHistory.push(z);
 
     if(altitudeHistory.length > maxHistory){
         altitudeHistory.shift();
@@ -722,6 +848,7 @@ function saveRun(){
 
         targetX: targetX,
         targetY: targetY,
+        targetZ: targetZ,
 
         maxError: maxError,
         controlEffort: cumulativeEffort,
@@ -774,9 +901,11 @@ function loadRun(){
     qvSlider.value = run.Qv;
     rSlider.value = run.R;
     nSlider.value = run.N;
+    zSlider.value = run.targetZ;
 
     targetX = run.targetX;
     targetY = run.targetY;
+    targetZ = run.targetZ;
 
     updateLabels();
 
