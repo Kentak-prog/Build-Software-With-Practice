@@ -93,8 +93,29 @@ Prediction Horizon N:
 
 <br><br>
 
+<label>
+Run Name:
+</label>
+
+<input
+    type="text"
+    id="runName"
+    value="Run1"
+    style="width:95%;"
+/>
+<label>
+Saved Runs:
+</label>
+
+<select
+    id="runList"
+    style="width:95%;"
+>
+</select>
 <button onclick="resetSim()">Reset</button>
 <button onclick="disturb()">Wind Gust</button>
+<button onclick="saveRun()">Save Run</button>
+<button onclick="loadRun()">Load Run</button>
 
 <hr>
 
@@ -649,6 +670,122 @@ if(currentError > maxError){
     draw();
 }
 
+function refreshRunList(){
+
+    const select =
+        document.getElementById(
+            "runList"
+        );
+
+    select.innerHTML = "";
+
+    const runs =
+        JSON.parse(
+            localStorage.getItem("runs")
+        ) || [];
+
+    runs.forEach((run,index)=>{
+
+        const option =
+            document.createElement(
+                "option"
+            );
+
+        option.value = index;
+
+        option.text =
+            run.name +
+            " (" +
+            run.timestamp +
+            ")";
+
+        select.appendChild(option);
+    });
+}
+
+function saveRun(){
+
+    const name =
+        document.getElementById(
+            "runName"
+        ).value;
+
+    const run = {
+
+        name: name,
+
+        Q: qSlider.value,
+        Qv: qvSlider.value,
+        R: rSlider.value,
+        N: nSlider.value,
+
+        targetX: targetX,
+        targetY: targetY,
+
+        maxError: maxError,
+        controlEffort: cumulativeEffort,
+
+        timestamp:
+            new Date().toLocaleString()
+    };
+
+    let runs =
+        JSON.parse(
+            localStorage.getItem("runs")
+        ) || [];
+
+    runs.push(run);
+
+    localStorage.setItem(
+        "runs",
+        JSON.stringify(runs)
+    );
+
+    refreshRunList();
+
+    alert("Run saved.");
+}
+
+function loadRun(){
+
+    const runs =
+        JSON.parse(
+            localStorage.getItem("runs")
+        ) || [];
+
+    if(runs.length === 0){
+
+        alert(
+            "No saved runs found."
+        );
+
+        return;
+    }
+
+    const index =
+        document.getElementById(
+            "runList"
+        ).value;
+
+    const run = runs[index];
+
+    qSlider.value = run.Q;
+    qvSlider.value = run.Qv;
+    rSlider.value = run.R;
+    nSlider.value = run.N;
+
+    targetX = run.targetX;
+    targetY = run.targetY;
+
+    updateLabels();
+
+    alert(
+        "Loaded: " +
+        run.name
+    );
+}
+
+refreshRunList();
 setInterval(update,50);
 
 </script>
