@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>2D Drone MPC Demo</title>
+
+<style>
+body{
+    font-family: Arial, sans-serif;
+    margin:20px;
+    background:#f4f4f4;
+}
+
+.container{
+    display:flex;
+    gap:20px;
+}
+
+.controls{
+    width:250px;
+    background:white;
+    padding:15px;
+    border-radius:10px;
+}
+
+.sim{
+    flex:1;
+    background:white;
+    padding:15px;
+    border-radius:10px;
+}
+
+label{
+    display:block;
+    margin-top:15px;
+}
+
+canvas{
+    border:1px solid black;
+    background:white;
+}
+
+.value{
+    font-weight:bold;
+    color:#1565c0;
+}
+
+button{
+    padding:8px;
+    margin-right:5px;
+}
+</style>
+</head>
+
+<body>
+
+<h1>Interactive Drone MPC Gain Tuning Demo</h1>
+
+<div class="container">
+
+<div class="controls">
+
+<h3>Controller Settings</h3>
+
+<label>
+Position Weight Q:
+<span id="qVal" class="value">10</span>
+</label>
+<input type="range" id="Q" min="1" max="100" value="10">
+
+<label>
+Velocity Weight Qv:
+<span id="qvVal" class="value">1</span>
+</label>
+<input type="range" id="Qv" min="1" max="50" value="1">
+
+<label>
+Control Weight R:
+<span id="rVal" class="value">1</span>
+</label>
+<input type="range" id="R" min="1" max="50" value="1">
+
+<label>
+Prediction Horizon N:
+<span id="nVal" class="value">15</span>
+</label>
+<input type="range" id="N" min="5" max="40" value="15">
+
+<br><br>
+
+<button onclick="resetSim()">Reset</button>
+<button onclick="disturb()">Wind Gust</button>
+
+<hr>
+
+<p><b>X Position:</b> <span id="posXText">0</span></p>
+<p><b>Altitude:</b> <span id="posYText">0</span></p>
+<p><b>Speed:</b> <span id="velText">0</span></p>
+<p><b>Control Effort:</b> <span id="uText">0</span></p>
+
+</div>
+
+<div class="sim">
+<canvas id="canvas" width="850" height="550"></canvas>
+</div>
+
+</div>
+
+<script>
+
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+const dt = 0.1;
+
+// Drone states
+let x = 1;
+let y = 1;
+
+let vx = 0;
+let vy = 0;
+
+// Target
+const targetX = 10;
+const targetY = 10;
+
+// Display
+let lastU = 0;
+
+// Altitude graph
+let altitudeHistory = [];
+const maxHistory = 300;
+
+// Sliders
+const qSlider = document.getElementById("Q");
+const qvSlider = document.getElementById("Qv");
+const rSlider = document.getElementById("R");
+const nSlider = document.getElementById("N");
+
+function updateLabels(){
+    qVal.textContent = qSlider.value;
+    qvVal.textContent = qvSlider.value;
+    rVal.textContent = rSlider.value;
+    nVal.textContent = nSlider.value;
+}
+
+qSlider.oninput = updateLabels;
+qvSlider.oninput = updateLabels;
+rSlider.oninput = updateLabels;
+nSlider.oninput = updateLabels;
+
+updateLabels();
+
+function resetSim(){
+
+    x = 1;
+    y = 1;
+
+    vx = 0;
+    vy = 0;
+
+    altitudeHistory = [];
+    lastU = 0;
+}
+
+function disturb(){
+
+    // Simulated wind gust
+    vx += 2;
+    vy -= 2;
+}
+
+function computeMPC(){
+
+    const Q = Number(qSlider.value);
+    const Qv = Number(qvSlider.value);
+    const R = Number(rSlider.value);
+    const N = Number(nSlider.value);
+
+    let bestCost = Infinity;
+
+    let bestUx = 0;
+    let bestUy = 0;
+
+    for(let ux=-3; ux<=3; ux+=0.5){
+
+        for(let uy=-3; uy<=3; uy+=0.5){
+
+            let xp = x;
+            let yp = y;
+
+            let vxp = vx;
+            let vyp = vy;
+
+            let cost = 0;
+
+            for(let k=0; k<N; k++){
+
+                xp += vxp * dt;
+                yp += vyp * dt;
+
+                vxp += ux * dt;
+                vyp += uy * dt;
+
+                cost +=
+
+                    Q * (
+                        Math.pow(targetX - xp,2)
+                        +
+                        Math.pow(targetY - yp,2)
+                    )
+
+                    +
+
+                    Qv * (
+                        Math.pow(vxp,2)
+                        +
+                        Math.pow(vyp,2)
+                    )
+
+                    +
+
+                    R * (
+                        Math.pow(ux,2)
+                        +
+                        Math.pow(uy,2)
+                    );
+            }
+
+            if(cost < bestCost){
+
+                bestCost = cost;
+
+                bestUx = ux;
+                bestUy = uy;
+            }
+        }
+    }
+
+    return {
+        ux: bestUx,
+        uy: bestUy
+    };
+}
+
+function drawDrone(px, py){
+
+    ctx.strokeStyle = "dodgerblue";
+    ctx.lineWidth = 2;
+
+    // body
+    ctx.beginPath();
+    ctx.moveTo(px - 20, py);
+    ctx.lineTo(px + 20, py);
+    ctx.stroke();
+
+    // motors
+    ctx.beginPath();
+    ctx.arc(px - 15, py, 4, 0, Math.PI*2);
+    ctx.arc(px + 15, py, 4, 0, Math.PI*2);
+    ctx.fillStyle = "dodgerblue";
+    ctx.fill();
+
+    // prop guards
+    ctx.strokeRect(px-20, py-5, 10, 10);
+    ctx.strokeRect(px+10, py-5, 10, 10);
+}
+
+function draw(){
+
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    //----------------------------------
+    // Drone World
+    //----------------------------------
+
+    const worldX = 80;
+    const worldY = 50;
+    const worldW = 700;
+    const worldH = 220;
+
+    ctx.strokeStyle = "black";
+    ctx.strokeRect(worldX, worldY, worldW, worldH);
+
+    function mapX(v){
+        return worldX + (v/12) * worldW;
+    }
+
+    function mapY(v){
+        return worldY + worldH - (v/12) * worldH;
+    }
+
+    // grid
+    ctx.strokeStyle = "#dddddd";
+
+    for(let i=0;i<=12;i++){
+
+        const gx = worldX + i*(worldW/12);
+
+        ctx.beginPath();
+        ctx.moveTo(gx,worldY);
+        ctx.lineTo(gx,worldY+worldH);
+        ctx.stroke();
+    }
+
+    for(let i=0;i<=12;i++){
+
+        const gy = worldY + i*(worldH/12);
+
+        ctx.beginPath();
+        ctx.moveTo(worldX,gy);
+        ctx.lineTo(worldX+worldW,gy);
+        ctx.stroke();
+    }
+
+    // Target
+    const tx = mapX(targetX);
+    const ty = mapY(targetY);
+
+    ctx.strokeStyle = "red";
+    ctx.lineWidth = 3;
+
+    ctx.beginPath();
+    ctx.moveTo(tx-10,ty);
+    ctx.lineTo(tx+10,ty);
+
+    ctx.moveTo(tx,ty-10);
+    ctx.lineTo(tx,ty+10);
+    ctx.stroke();
+
+    ctx.fillStyle="red";
+    ctx.fillText("Target",tx+12,ty);
+
+    // Drone
+    const droneX = mapX(x);
+    const droneY = mapY(y);
+
+    drawDrone(droneX,droneY);
+
+    //----------------------------------
+    // Altitude Graph
+    //----------------------------------
+
+    const graphX = 80;
+    const graphY = 330;
+    const graphW = 700;
+    const graphH = 180;
+
+    ctx.strokeStyle="black";
+    ctx.strokeRect(graphX,graphY,graphW,graphH);
+
+    ctx.fillStyle="black";
+    ctx.fillText(
+        "Altitude vs Time",
+        graphX + 10,
+        graphY - 10
+    );
+
+    const targetLineY =
+        graphY +
+        graphH -
+        (targetY/12)*graphH;
+
+    ctx.strokeStyle="red";
+
+    ctx.beginPath();
+    ctx.moveTo(graphX,targetLineY);
+    ctx.lineTo(graphX+graphW,targetLineY);
+    ctx.stroke();
+
+    ctx.fillStyle="red";
+    ctx.fillText(
+        "Target Altitude",
+        graphX + graphW - 120,
+        targetLineY - 5
+    );
+
+    ctx.strokeStyle="dodgerblue";
+    ctx.lineWidth=2;
+    ctx.beginPath();
+
+    for(let i=0;i<altitudeHistory.length;i++){
+
+        const px =
+            graphX +
+            (i/maxHistory)*graphW;
+
+        const alt =
+            Math.max(
+                0,
+                Math.min(12,altitudeHistory[i])
+            );
+
+        const py =
+            graphY +
+            graphH -
+            (alt/12)*graphH;
+
+        if(i===0){
+            ctx.moveTo(px,py);
+        }
+        else{
+            ctx.lineTo(px,py);
+        }
+    }
+
+    ctx.stroke();
+
+    //----------------------------------
+    // Data Readouts
+    //----------------------------------
+
+    document.getElementById("posXText")
+        .textContent = x.toFixed(2);
+
+    document.getElementById("posYText")
+        .textContent = y.toFixed(2);
+
+    const speed =
+        Math.sqrt(vx*vx + vy*vy);
+
+    document.getElementById("velText")
+        .textContent = speed.toFixed(2);
+
+    document.getElementById("uText")
+        .textContent = lastU.toFixed(2);
+}
+
+function update(){
+
+    const control = computeMPC();
+
+    vx += control.ux * dt;
+    vy += control.uy * dt;
+
+    x += vx * dt;
+    y += vy * dt;
+
+    x = Math.max(0, Math.min(12, x));
+    y = Math.max(0, Math.min(12, y));
+
+    lastU = Math.sqrt(
+        control.ux*control.ux +
+        control.uy*control.uy
+    );
+
+    altitudeHistory.push(y);
+
+    if(altitudeHistory.length > maxHistory){
+        altitudeHistory.shift();
+    }
+
+    draw();
+}
+
+setInterval(update,50);
+
+</script>
+
+</body>
+</html>
