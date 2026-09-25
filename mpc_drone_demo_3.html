@@ -100,13 +100,20 @@ Prediction Horizon N:
 
 <p><b>X Position:</b> <span id="posXText">0</span></p>
 <p><b>Altitude:</b> <span id="posYText">0</span></p>
+
+<p><b>Target X:</b> <span id="targetXText">10</span></p>
+<p><b>Target Y:</b> <span id="targetYText">10</span></p>
+
 <p><b>Speed:</b> <span id="velText">0</span></p>
 <p><b>Control Effort:</b> <span id="uText">0</span></p>
+
+<p><b>Distance Error:</b> <span id="errorText">0</span></p>
+<p><b>Max Error:</b> <span id="maxErrorText">0</span></p>
 
 </div>
 
 <div class="sim">
-<canvas id="canvas" width="850" height="550"></canvas>
+<canvas id="canvas" width="850" height="700"></canvas>
 </div>
 
 </div>
@@ -133,8 +140,12 @@ let targetY = 10;
 // Display
 let lastU = 0;
 
+let maxError = 0;
+let cumulativeEffort = 0;
+
 // Altitude graph
 let altitudeHistory = [];
+let effortHistory = [];
 const maxHistory = 300;
 
 let droneTrail = [];
@@ -189,6 +200,8 @@ canvas.addEventListener("click", function(event){
     }
 });
 function resetSim(){
+    maxError = 0;
+    cumulativeEffort = 0;
 
     x = 1;
     y = 1;
@@ -355,7 +368,17 @@ function draw(){
     // Drone Trail
     //----------------------------------
 
-    ctx.strokeStyle = "rgba(30,144,255,0.6)";
+    const speedMagnitude =
+    Math.sqrt(vx*vx + vy*vy);
+
+    let redAmount =
+    Math.min(255, speedMagnitude * 40);
+
+    let blueAmount =
+    255 - Math.min(200, speedMagnitude * 25);
+
+    ctx.strokeStyle =
+    `rgb(${redAmount},100,${blueAmount})`;
     ctx.lineWidth = 2;
 
     ctx.beginPath();
@@ -397,6 +420,29 @@ ctx.stroke();
     const droneY = mapY(y);
 
     drawDrone(droneX,droneY);
+    //----------------------------------
+    // Velocity Vector
+    //----------------------------------
+
+    ctx.strokeStyle = "green";
+    ctx.lineWidth = 3;
+
+    ctx.beginPath();
+    ctx.moveTo(droneX, droneY);
+
+    ctx.lineTo(
+    droneX + vx * 20,
+    droneY - vy * 20
+    );
+
+    ctx.stroke();
+
+    ctx.fillStyle = "green";
+    ctx.fillText(
+    "Velocity",
+    droneX + vx * 20 + 5,
+    droneY - vy * 20
+    );
 
     //----------------------------------
     // Altitude Graph
@@ -467,6 +513,50 @@ ctx.stroke();
 
     ctx.stroke();
 
+    const effortGraphY = 540;
+
+ctx.strokeStyle="black";
+ctx.strokeRect(
+    graphX,
+    effortGraphY,
+    graphW,
+    120
+);
+
+ctx.fillStyle="black";
+ctx.fillText(
+    "Control Effort vs Time",
+    graphX + 10,
+    effortGraphY - 10
+);
+
+ctx.strokeStyle="orange";
+ctx.beginPath();
+
+for(let i=0;i<effortHistory.length;i++){
+
+    const px =
+        graphX +
+        (i/maxHistory)*graphW;
+
+    const py =
+        effortGraphY +
+        120 -
+        Math.min(
+            120,
+            effortHistory[i]*20
+        );
+
+    if(i===0){
+        ctx.moveTo(px,py);
+    }
+    else{
+        ctx.lineTo(px,py);
+    }
+}
+
+ctx.stroke();
+
     //----------------------------------
     // Data Readouts
     //----------------------------------
@@ -485,9 +575,32 @@ ctx.stroke();
 
     document.getElementById("uText")
         .textContent = lastU.toFixed(2);
+    document.getElementById("targetXText")
+    .textContent = targetX.toFixed(2);
+
+    document.getElementById("targetYText")
+    .textContent = targetY.toFixed(2);
+
+const error =
+    Math.sqrt(
+        (targetX-x)*(targetX-x)
+        +
+        (targetY-y)*(targetY-y)
+    );
+
+    document.getElementById("errorText")
+    .textContent = error.toFixed(2);
+
+    document.getElementById("maxErrorText")
+    .textContent = maxError.toFixed(2);
 }
 
 function update(){
+    effortHistory.push(lastU);
+
+if(effortHistory.length > maxHistory){
+    effortHistory.shift();
+}
 
     const control = computeMPC();
 
@@ -513,6 +626,19 @@ if(droneTrail.length > maxTrail){
         control.ux*control.ux +
         control.uy*control.uy
     );
+
+    const currentError =
+    Math.sqrt(
+        (targetX-x)*(targetX-x)
+        +
+        (targetY-y)*(targetY-y)
+    );
+
+if(currentError > maxError){
+    maxError = currentError;
+}
+
+    cumulativeEffort += lastU;
 
     altitudeHistory.push(y);
 
