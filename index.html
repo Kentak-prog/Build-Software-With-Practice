@@ -1,0 +1,1029 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>3D Drone MPC Demo</title>
+
+<style>
+body{
+    font-family: Arial, sans-serif;
+    margin:20px;
+    background:#f4f4f4;
+}
+
+.container{
+    display:flex;
+    gap:20px;
+}
+
+.controls{
+    width:250px;
+    background:white;
+    padding:15px;
+    border-radius:10px;
+}
+
+.sim{
+    flex:1;
+    background:white;
+    padding:15px;
+    border-radius:10px;
+}
+
+label{
+    display:block;
+    margin-top:15px;
+}
+
+canvas{
+    border:1px solid black;
+    background:white;
+}
+
+.value{
+    font-weight:bold;
+    color:#1565c0;
+}
+
+button{
+    padding:8px;
+    margin-right:5px;
+}
+</style>
+</head>
+
+<body>
+<script type="module">
+
+import {
+    getFirestore,
+    collection,
+    addDoc,
+    getDocs,
+    deleteDoc,
+    doc
+}
+from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
+
+import { initializeApp }
+from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+
+
+const firebaseConfig = {
+
+    apiKey: "AIzaSyAkpldQc8cIJGq6lJKBhj3-7r0-ZvE-HI0",
+    authDomain: "interactive-drone-mpc-tuner.firebaseapp.com",
+    projectId: "interactive-drone-mpc-tuner",
+    storageBucket: "interactive-drone-mpc-tuner.firebasestorage.app",
+    messagingSenderId: "448923589928",
+    appId: "1:448923589928:web:00bf2e781979ca0a6c441d"
+   
+};
+
+const app =
+    initializeApp(firebaseConfig);
+
+const db =
+    getFirestore(app);
+
+window.firebaseApi = {
+    db,
+    collection,
+    addDoc,
+    getDocs,
+    deleteDoc,
+    doc
+};
+
+console.log("Firestore Loaded");
+console.log("Firebase Connected");
+
+</script>
+
+<h1>Interactive Drone MPC Gain Tuning Demo</h1>
+
+<p>
+Click anywhere in the flight area to move the target waypoint.
+Observe how different MPC settings change the flight path.
+</p>
+
+<div class="container">
+
+<div class="controls">
+
+<h3>Controller Settings</h3>
+
+<label>
+Position Weight Q:
+<span id="qVal" class="value">10</span>
+</label>
+<input type="range" id="Q" min="1" max="100" value="10">
+
+<label>
+Velocity Weight Qv:
+<span id="qvVal" class="value">1</span>
+</label>
+<input type="range" id="Qv" min="1" max="50" value="1">
+
+<label>
+Control Weight R:
+<span id="rVal" class="value">1</span>
+</label>
+<input type="range" id="R" min="1" max="50" value="1">
+
+<label>
+Prediction Horizon N:
+<span id="nVal" class="value">15</span>
+</label>
+<input type="range" id="N" min="5" max="40" value="15">
+
+<br><br>
+
+<label>
+Target Altitude:
+<span id="targetZVal" class="value">8</span>
+</label>
+
+<input
+type="range"
+id="Z"
+min="0"
+max="12"
+step="0.1"
+value="8">
+<label>
+
+Run Name:
+</label>
+
+<input
+    type="text"
+    id="runName"
+    value="Run1"
+    style="width:95%;"
+/>
+<label>
+Saved Runs:
+</label>
+
+<select
+    id="runList"
+    style="width:95%;"
+>
+</select>
+<button onclick="resetSim()">Reset</button>
+<button onclick="disturb()">Wind Gust</button>
+<button onclick="saveRun()">Save Run</button>
+<button onclick="loadRun()">Load Run</button>
+<button onclick="deleteRun()">Delete Run</button>
+
+<hr>
+
+<p><b>X Position:</b> <span id="posXText">0</span></p>
+<p><b>Y Position:</b> <span id="posYText">0</span></p>
+<p><b>Z Position:</b><span id="posZText">0</span></p>
+
+<p><b>Target X:</b> <span id="targetXText">10</span></p>
+<p><b>Target Y:</b> <span id="targetYText">10</span></p>
+<p><b>Target Z:</b><span id="targetZText">8</span></p>
+
+<p><b>Speed:</b> <span id="velText">0</span></p>
+<p><b>Control Effort:</b> <span id="uText">0</span></p>
+
+<p><b>Distance Error:</b> <span id="errorText">0</span></p>
+<p><b>Max Error:</b> <span id="maxErrorText">0</span></p>
+
+</div>
+
+<div class="sim">
+<canvas id="canvas" width="1200" height="900"></canvas>
+</div>
+
+</div>
+<script>
+
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const dt = 0.1;
+
+// Drone states
+let x = 1;
+let y = 1;
+let z = 1;
+
+let vx = 0;
+let vy = 0;
+let vz = 0;
+
+
+// Target
+let targetX = 10;
+let targetY = 10;
+let targetZ = 8;
+
+// Display
+let lastU = 0;
+
+let maxError = 0;
+let cumulativeEffort = 0;
+
+// Altitude graph
+let altitudeHistory = [];
+let effortHistory = [];
+const maxHistory = 300;
+let firebaseRuns = {};
+
+let droneTrail = [];
+const maxTrail = 500;
+
+// Sliders
+const qSlider = document.getElementById("Q");
+const qvSlider = document.getElementById("Qv");
+const rSlider = document.getElementById("R");
+const nSlider = document.getElementById("N");
+const zSlider = document.getElementById("Z");
+
+function updateLabels(){
+    qVal.textContent = qSlider.value;
+    qvVal.textContent = qvSlider.value;
+    rVal.textContent = rSlider.value;
+    nVal.textContent = nSlider.value;
+    targetZVal.textContent = zSlider.value;
+    targetZ = Number(zSlider.value);
+}
+
+qSlider.oninput = updateLabels;
+qvSlider.oninput = updateLabels;
+rSlider.oninput = updateLabels;
+nSlider.oninput = updateLabels;
+zSlider.oninput = updateLabels;
+
+updateLabels();
+
+
+canvas.addEventListener("click", function(event){
+
+    const rect = canvas.getBoundingClientRect();
+
+    const mouseX = event.clientX - rect.left;
+    const mouseY = event.clientY - rect.top;
+
+    const worldX = 80;
+    const worldY = 50;
+    const worldW = 700;
+    const worldH = 220;
+
+    if(
+        mouseX >= worldX &&
+        mouseX <= worldX + worldW &&
+        mouseY >= worldY &&
+        mouseY <= worldY + worldH
+    ){
+
+        targetX =
+            ((mouseX - worldX) / worldW) * 12;
+
+        targetY =
+            12 -
+            ((mouseY - worldY) / worldH) * 12;
+    }
+});
+function resetSim(){
+    maxError = 0;
+    cumulativeEffort = 0;
+
+    x = 1;
+    y = 1;
+    z = 1;
+
+    vx = 0;
+    vy = 0;
+    vz = 0;
+
+    altitudeHistory = [];
+    droneTrail = [];
+
+    lastU = 0;
+}
+
+function disturb(){
+
+    // Simulated wind gust
+    vx += 2;
+    vy -= 2;
+    vz += 1;
+}
+
+function computeMPC(){
+
+    const Q =
+        Number(qSlider.value);
+
+    const Qv =
+        Number(qvSlider.value);
+
+    const R =
+        Number(rSlider.value);
+
+    const N =
+        Number(nSlider.value);
+
+    let bestCost =
+        Infinity;
+
+    let bestControl = {
+
+        ux:0,
+        uy:0,
+        uz:0
+    };
+
+    for(let ux=-2; ux<=2; ux+=0.5){
+
+        for(let uy=-2; uy<=2; uy+=0.5){
+
+            for(let uz=-2; uz<=2; uz+=0.5){
+
+                let xp = x;
+                let yp = y;
+                let zp = z;
+
+                let vxp = vx;
+                let vyp = vy;
+                let vzp = vz;
+
+                let cost = 0;
+
+                for(let k=0;k<N;k++){
+
+                    vxp += ux*dt;
+                    vyp += uy*dt;
+                    vzp += uz*dt;
+
+                    xp += vxp*dt;
+                    yp += vyp*dt;
+                    zp += vzp*dt;
+
+                    cost +=
+
+                        Q * (
+
+                            (targetX-xp)**2
+
+                            +
+
+                            (targetY-yp)**2
+
+                            +
+
+                            (targetZ-zp)**2
+
+                        )
+
+                        +
+
+                        Qv * (
+
+                            vxp*vxp
+
+                            +
+
+                            vyp*vyp
+
+                            +
+
+                            vzp*vzp
+
+                        )
+
+                        +
+
+                        R * (
+
+                            ux*ux
+
+                            +
+
+                            uy*uy
+
+                            +
+
+                            uz*uz
+
+                        );
+                }
+
+                if(cost < bestCost){
+
+                    bestCost = cost;
+
+                    bestControl = {
+
+                        ux:ux,
+
+                        uy:uy,
+
+                        uz:uz
+                    };
+                }
+            }
+        }
+    }
+
+    return bestControl;
+}
+
+
+function drawDrone(px, py){
+
+    ctx.strokeStyle = "dodgerblue";
+    ctx.lineWidth = 2;
+
+    // body
+    ctx.beginPath();
+    ctx.moveTo(px - 20, py);
+    ctx.lineTo(px + 20, py);
+    ctx.stroke();
+
+    // motors
+    ctx.beginPath();
+    ctx.arc(px - 15, py, 4, 0, Math.PI * 2);
+    ctx.arc(px + 15, py, 4, 0, Math.PI * 2);
+
+    ctx.fillStyle = "dodgerblue";
+    ctx.fill();
+
+    // prop guards
+    ctx.strokeRect(px - 20, py - 5, 10, 10);
+    ctx.strokeRect(px + 10, py - 5, 10, 10);
+}
+
+function draw(){
+
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    //----------------------------------
+    // Drone World
+    //----------------------------------
+
+    const worldX = 80;
+    const worldY = 50;
+    const worldW = 700;
+    const worldH = 220;
+
+    ctx.strokeStyle = "black";
+    // Front face
+    ctx.strokeStyle = "black";
+
+    ctx.strokeRect(
+        worldX,
+        worldY,
+        worldW,
+        worldH
+    );
+
+// Back face
+
+ctx.strokeRect(
+    worldX + 80,
+    worldY - 50,
+    worldW,
+    worldH
+);
+
+// Connecting edges
+
+ctx.beginPath();
+
+ctx.moveTo(worldX,worldY);
+ctx.lineTo(worldX+80,worldY-50);
+
+ctx.moveTo(worldX+worldW,worldY);
+ctx.lineTo(worldX+worldW+80,worldY-50);
+
+ctx.moveTo(worldX,worldY+worldH);
+ctx.lineTo(worldX+80,worldY+worldH-50);
+
+ctx.moveTo(worldX+worldW,worldY+worldH);
+ctx.lineTo(worldX+worldW+80,worldY+worldH-50);
+
+ctx.stroke();
+
+    function mapX(v){
+        return worldX + (v/12) * worldW;
+    }
+
+    function mapY(v){
+        return worldY + worldH - (v/12) * worldH;
+    }
+
+    // grid
+    ctx.strokeStyle = "#dddddd";
+
+   /* for(let i=0;i<=12;i++){
+
+        const gx = worldX + i*(worldW/12);
+
+        ctx.beginPath();
+        ctx.moveTo(gx,worldY);
+        ctx.lineTo(gx,worldY+worldH);
+        ctx.stroke();
+    }
+    */
+    /*for(let i=0;i<=12;i++){
+
+        const gy = worldY + i*(worldH/12);
+
+        ctx.beginPath();
+        ctx.moveTo(worldX,gy);
+        ctx.lineTo(worldX+worldW,gy);
+        ctx.stroke();
+    }
+    */
+
+    //----------------------------------
+    // Drone Trail
+    //----------------------------------
+
+    const speedMagnitude =
+    Math.sqrt(vx*vx + vy*vy + vz*vz);
+
+    let redAmount =
+    Math.min(255, (z/12)*255);
+
+    let blueAmount =
+    255 - Math.min(200, speedMagnitude * 25);
+
+    ctx.strokeStyle =
+    `rgb(${redAmount},100,${blueAmount})`;
+    ctx.lineWidth = 2;
+
+    ctx.beginPath();
+
+    for(let i=0;i<droneTrail.length;i++){
+
+    const trailX = mapX(droneTrail[i].x) + droneTrail[i].z * 12;
+    const trailY = mapY(droneTrail[i].y) - droneTrail[i].z * 8;
+
+    if(i===0){
+        ctx.moveTo(trailX,trailY);
+    }
+    else{
+        ctx.lineTo(trailX,trailY);
+    }
+}
+
+ctx.stroke();
+    // Target
+    const tx = mapX(targetX) + targetZ*12;
+    const ty = mapY(targetY) - targetZ*8;
+
+    ctx.strokeStyle = "red";
+    ctx.lineWidth = 3;
+
+    ctx.beginPath();
+    ctx.moveTo(tx-10,ty);
+    ctx.lineTo(tx+10,ty);
+
+    ctx.moveTo(tx,ty-10);
+    ctx.lineTo(tx,ty+10);
+    ctx.stroke();
+
+    ctx.fillStyle="red";
+    ctx.fillText("Target",tx+12,ty);
+
+    // Drone
+    const droneX = mapX(x) + z*12;
+    const droneY = mapY(y) - z*8;
+
+    drawDrone(droneX,droneY);
+    //----------------------------------
+    // Velocity Vector
+    //----------------------------------
+
+    ctx.strokeStyle = "green";
+    ctx.lineWidth = 3;
+
+    ctx.beginPath();
+    ctx.moveTo(droneX, droneY);
+
+    ctx.lineTo(
+    droneX + vx * 50 + vz * 10,
+    droneY - vy * 50 - vz * 6
+    );
+
+    ctx.stroke();
+
+    ctx.fillStyle = "green";
+    ctx.fillText(
+    "Velocity",
+    droneX + vx * 20 + 5,
+    droneY - vy * 20 - 5
+    );
+
+    //----------------------------------
+    // Altitude Graph
+    //----------------------------------
+
+    const graphX = 80;
+    const graphY = 330;
+    const graphW = 700;
+    const graphH = 180;
+
+    ctx.strokeStyle="black";
+    ctx.strokeRect(graphX,graphY,graphW,graphH);
+
+    ctx.fillStyle="black";
+    ctx.fillText(
+        "Altitude vs Time",
+        graphX + 10,
+        graphY - 10
+    );
+
+    const targetLineY =
+        graphY +
+        graphH -
+        (targetZ/12)*graphH;
+
+    ctx.strokeStyle="red";
+
+    ctx.beginPath();
+    ctx.moveTo(graphX,targetLineY);
+    ctx.lineTo(graphX+graphW,targetLineY);
+    ctx.stroke();
+
+    ctx.fillStyle="red";
+    ctx.fillText(
+        "Target Altitude",
+        graphX + graphW - 120,
+        targetLineY - 5
+    );
+
+    ctx.strokeStyle="dodgerblue";
+    ctx.lineWidth=2;
+    ctx.beginPath();
+
+    for(let i=0;i<altitudeHistory.length;i++){
+
+        const px =
+            graphX +
+            (i/maxHistory)*graphW;
+
+        const alt =
+            Math.max(
+                0,
+                Math.min(12,altitudeHistory[i])
+            );
+
+        const py =
+            graphY +
+            graphH -
+            (alt/12)*graphH;
+
+        if(i===0){
+            ctx.moveTo(px,py);
+        }
+        else{
+            ctx.lineTo(px,py);
+        }
+    }
+
+    ctx.stroke();
+
+    const effortGraphY = 540;
+
+ctx.strokeStyle="black";
+ctx.strokeRect(
+    graphX,
+    effortGraphY,
+    graphW,
+    120
+);
+
+ctx.fillStyle="black";
+ctx.fillText(
+    "Control Effort vs Time",
+    graphX + 10,
+    effortGraphY - 10
+);
+
+ctx.strokeStyle="orange";
+ctx.beginPath();
+
+for(let i=0;i<effortHistory.length;i++){
+
+    const px =
+        graphX +
+        (i/maxHistory)*graphW;
+
+    const py =
+        effortGraphY +
+        120 -
+        Math.min(
+            120,
+            effortHistory[i]*20
+        );
+
+    if(i===0){
+        ctx.moveTo(px,py);
+    }
+    else{
+        ctx.lineTo(px,py);
+    }
+}
+
+ctx.stroke();
+
+    //----------------------------------
+    // Data Readouts
+    //----------------------------------
+
+    document.getElementById("posXText")
+        .textContent = x.toFixed(2);
+
+    document.getElementById("posYText")
+        .textContent = y.toFixed(2);
+
+    document.getElementById("posZText")
+        .textContent = z.toFixed(2);
+
+    const speed =
+        Math.sqrt(vx*vx + vy*vy + vz*vz);
+
+    document.getElementById("velText")
+        .textContent = speed.toFixed(2);
+
+    document.getElementById("uText")
+        .textContent = lastU.toFixed(2);
+
+    document.getElementById("targetXText")
+    .textContent = targetX.toFixed(2);
+
+    document.getElementById("targetYText")
+    .textContent = targetY.toFixed(2);
+
+    document.getElementById("targetZText")
+    .textContent = targetZ.toFixed(2);
+
+const error =
+    Math.sqrt(
+        (targetX-x)*(targetX-x)
+        +
+        (targetY-y)*(targetY-y)
+        +
+        (targetZ-z)*(targetZ-z)
+    );
+
+    document.getElementById("errorText")
+    .textContent = error.toFixed(2);
+
+    document.getElementById("maxErrorText")
+    .textContent = maxError.toFixed(2);
+}
+
+function update(){
+    effortHistory.push(lastU);
+
+ if(effortHistory.length > maxHistory){
+    effortHistory.shift();
+ }
+
+    const control = computeMPC();
+
+    vx += control.ux * dt;
+    vy += control.uy * dt;
+    vz += control.uz * dt;
+
+    x += vx * dt;
+    y += vy * dt;
+    z += vz * dt;
+
+    droneTrail.push({
+    x:x,
+    y:y,
+    z:z
+});
+
+if(droneTrail.length > maxTrail){
+    droneTrail.shift();
+}
+
+    x = Math.max(0, Math.min(12, x));
+    y = Math.max(0, Math.min(12, y));
+    z = Math.max(0,Math.min(12,z));
+
+    lastU = Math.sqrt(
+        control.ux*control.ux +
+        control.uy*control.uy +
+        control.uz*control.uz
+    );
+
+    const currentError =
+    Math.sqrt(
+        (targetX-x)*(targetX-x)
+        +
+        (targetY-y)*(targetY-y)
+        +
+        (targetZ-z)*(targetZ-z)
+    );
+
+if(currentError > maxError){
+    maxError = currentError;
+}
+
+    cumulativeEffort += lastU;
+
+    altitudeHistory.push(z);
+
+    if(altitudeHistory.length > maxHistory){
+        altitudeHistory.shift();
+    }
+
+    draw();
+}
+
+// Storing Functions
+async function refreshRunList(){
+    console.log("Loading Runs...");
+    const select =
+        document.getElementById(
+            "runList"
+        );
+
+    select.innerHTML = "";
+
+    const querySnapshot =
+    await window.firebaseApi.getDocs(
+        window.firebaseApi.collection(
+            window.firebaseApi.db,
+            "runs"
+        )
+    );
+    console.log(
+      "Runs Found:",
+       querySnapshot.size
+);
+
+    querySnapshot.forEach((docItem)=>{
+
+        const run =
+            docItem.data();
+
+        firebaseRuns[docItem.id] = run;
+
+        const option =
+            document.createElement(
+                "option"
+            );
+
+        option.value =
+            docItem.id;
+
+        option.text =
+            run.name;
+
+        select.appendChild(option);
+
+    });
+}
+
+async function saveRun(){
+
+    const name =
+        document.getElementById(
+            "runName"
+        ).value;
+        await window.firebaseApi.addDoc(
+        window.firebaseApi.collection(
+        window.firebaseApi.db,
+        "runs"
+    ),
+        {
+
+            name,
+
+            Q:qSlider.value,
+            Qv:qvSlider.value,
+            R:rSlider.value,
+            N:nSlider.value,
+
+            targetX,
+            targetY,
+            targetZ,
+
+            maxError,
+            controlEffort:cumulativeEffort,
+
+            created:
+            new Date().toISOString()
+        }
+    );
+
+    alert(
+        "Run saved to Firebase."
+    );
+
+    refreshRunList();
+}
+
+function loadRun(){
+
+    const selectedId =
+        document.getElementById(
+            "runList"
+        ).value;
+
+    const run =
+        firebaseRuns[selectedId];
+
+    if(!run){
+
+        alert("Run not found.");
+
+        return;
+    }
+
+    qSlider.value = run.Q;
+    qvSlider.value = run.Qv;
+    rSlider.value = run.R;
+    nSlider.value = run.N;
+
+    targetX = run.targetX;
+    targetY = run.targetY;
+    targetZ = run.targetZ;
+
+    zSlider.value = targetZ;
+
+    updateLabels();
+
+    alert(
+        "Loaded: " +
+        run.name
+    );
+}
+
+async function deleteRun(){
+
+    const id =
+        document.getElementById(
+            "runList"
+        ).value;
+
+    await window.firebaseApi.deleteDoc(
+    window.firebaseApi.doc(
+        window.firebaseApi.db,
+        "runs",
+        id
+    )
+);
+
+    refreshRunList();
+
+    alert(
+        "Run deleted."
+    );
+}
+
+console.log(
+    "firebaseApi:",
+    window.firebaseApi
+);
+
+window.addEventListener("load", () => {
+
+    function waitForFirebase(){
+
+        if(window.firebaseApi){
+
+            console.log(
+                "Firebase Ready"
+            );
+
+            refreshRunList();
+
+            setInterval(
+                update,
+                50
+            );
+
+        }
+        else{
+
+            console.log(
+                "Waiting for Firebase..."
+            );
+
+            setTimeout(
+                waitForFirebase,
+                100
+            );
+        }
+    }
+
+    waitForFirebase();
+
+});
+</script>
+
+</body>
+</html>
