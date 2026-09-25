@@ -116,6 +116,7 @@ Saved Runs:
 <button onclick="disturb()">Wind Gust</button>
 <button onclick="saveRun()">Save Run</button>
 <button onclick="loadRun()">Load Run</button>
+<button onclick="deleteRun()">Delete Run</button>
 
 <hr>
 
@@ -783,6 +784,35 @@ function loadRun(){
         "Loaded: " +
         run.name
     );
+}
+
+function deleteRun(){
+
+    let runs =
+        JSON.parse(
+            localStorage.getItem("runs")
+        ) || [];
+
+    const index =
+        document.getElementById(
+            "runList"
+        ).value;
+
+    if(index === ""){
+        alert("Select a run first.");
+        return;
+    }
+
+    runs.splice(index,1);
+
+    localStorage.setItem(
+        "runs",
+        JSON.stringify(runs)
+    );
+
+    refreshRunList();
+
+    alert("Run deleted.");
 }
 
 refreshRunList();
