@@ -53,6 +53,52 @@ button{
 </head>
 
 <body>
+<script type="module">
+
+import {
+    getFirestore,
+    collection,
+    addDoc,
+    getDocs,
+    deleteDoc,
+    doc
+}
+from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
+
+import { initializeApp }
+from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+
+
+const firebaseConfig = {
+
+    apiKey: "AIzaSyAkpldQc8cIJGq6lJKBhj3-7r0-ZvE-HI0",
+    authDomain: "interactive-drone-mpc-tuner.firebaseapp.com",
+    projectId: "interactive-drone-mpc-tuner",
+    storageBucket: "interactive-drone-mpc-tuner.firebasestorage.app",
+    messagingSenderId: "448923589928",
+    appId: "1:448923589928:web:00bf2e781979ca0a6c441d"
+   
+};
+
+const app =
+    initializeApp(firebaseConfig);
+
+const db =
+    getFirestore(app);
+
+window.firebaseApi = {
+    db,
+    collection,
+    addDoc,
+    getDocs,
+    deleteDoc,
+    doc
+};
+
+console.log("Firestore Loaded");
+console.log("Firebase Connected");
+
+</script>
 
 <h1>Interactive Drone MPC Gain Tuning Demo</h1>
 
@@ -154,12 +200,10 @@ Saved Runs:
 </div>
 
 </div>
-
 <script>
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
-
 const dt = 0.1;
 
 // Drone states
@@ -187,6 +231,7 @@ let cumulativeEffort = 0;
 let altitudeHistory = [];
 let effortHistory = [];
 const maxHistory = 300;
+let firebaseRuns = {};
 
 let droneTrail = [];
 const maxTrail = 500;
@@ -797,8 +842,9 @@ if(currentError > maxError){
     draw();
 }
 
-function refreshRunList(){
-
+// Storing Functions
+async function refreshRunList(){
+    console.log("Loading Runs...");
     const select =
         document.getElementById(
             "runList"
@@ -806,106 +852,107 @@ function refreshRunList(){
 
     select.innerHTML = "";
 
-    const runs =
-        JSON.parse(
-            localStorage.getItem("runs")
-        ) || [];
+    const querySnapshot =
+    await window.firebaseApi.getDocs(
+        window.firebaseApi.collection(
+            window.firebaseApi.db,
+            "runs"
+        )
+    );
+    console.log(
+      "Runs Found:",
+       querySnapshot.size
+);
 
-    runs.forEach((run,index)=>{
+    querySnapshot.forEach((docItem)=>{
+
+        const run =
+            docItem.data();
+
+        firebaseRuns[docItem.id] = run;
 
         const option =
             document.createElement(
                 "option"
             );
 
-        option.value = index;
+        option.value =
+            docItem.id;
 
         option.text =
-            run.name +
-            " (" +
-            run.timestamp +
-            ")";
+            run.name;
 
         select.appendChild(option);
+
     });
 }
 
-function saveRun(){
+async function saveRun(){
 
     const name =
         document.getElementById(
             "runName"
         ).value;
+        await window.firebaseApi.addDoc(
+        window.firebaseApi.collection(
+        window.firebaseApi.db,
+        "runs"
+    ),
+        {
 
-    const run = {
+            name,
 
-        name: name,
+            Q:qSlider.value,
+            Qv:qvSlider.value,
+            R:rSlider.value,
+            N:nSlider.value,
 
-        Q: qSlider.value,
-        Qv: qvSlider.value,
-        R: rSlider.value,
-        N: nSlider.value,
+            targetX,
+            targetY,
+            targetZ,
 
-        targetX: targetX,
-        targetY: targetY,
-        targetZ: targetZ,
+            maxError,
+            controlEffort:cumulativeEffort,
 
-        maxError: maxError,
-        controlEffort: cumulativeEffort,
+            created:
+            new Date().toISOString()
+        }
+    );
 
-        timestamp:
-            new Date().toLocaleString()
-    };
-
-    let runs =
-        JSON.parse(
-            localStorage.getItem("runs")
-        ) || [];
-
-    runs.push(run);
-
-    localStorage.setItem(
-        "runs",
-        JSON.stringify(runs)
+    alert(
+        "Run saved to Firebase."
     );
 
     refreshRunList();
-
-    alert("Run saved.");
 }
 
 function loadRun(){
 
-    const runs =
-        JSON.parse(
-            localStorage.getItem("runs")
-        ) || [];
-
-    if(runs.length === 0){
-
-        alert(
-            "No saved runs found."
-        );
-
-        return;
-    }
-
-    const index =
+    const selectedId =
         document.getElementById(
             "runList"
         ).value;
 
-    const run = runs[index];
+    const run =
+        firebaseRuns[selectedId];
+
+    if(!run){
+
+        alert("Run not found.");
+
+        return;
+    }
 
     qSlider.value = run.Q;
     qvSlider.value = run.Qv;
     rSlider.value = run.R;
     nSlider.value = run.N;
-    zSlider.value = run.targetZ;
 
     targetX = run.targetX;
     targetY = run.targetY;
     targetZ = run.targetZ;
+
+    zSlider.value = targetZ;
 
     updateLabels();
 
@@ -915,38 +962,67 @@ function loadRun(){
     );
 }
 
-function deleteRun(){
+async function deleteRun(){
 
-    let runs =
-        JSON.parse(
-            localStorage.getItem("runs")
-        ) || [];
-
-    const index =
+    const id =
         document.getElementById(
             "runList"
         ).value;
 
-    if(index === ""){
-        alert("Select a run first.");
-        return;
-    }
-
-    runs.splice(index,1);
-
-    localStorage.setItem(
+    await window.firebaseApi.deleteDoc(
+    window.firebaseApi.doc(
+        window.firebaseApi.db,
         "runs",
-        JSON.stringify(runs)
-    );
+        id
+    )
+);
 
     refreshRunList();
 
-    alert("Run deleted.");
+    alert(
+        "Run deleted."
+    );
 }
 
-refreshRunList();
-setInterval(update,50);
+console.log(
+    "firebaseApi:",
+    window.firebaseApi
+);
 
+window.addEventListener("load", () => {
+
+    function waitForFirebase(){
+
+        if(window.firebaseApi){
+
+            console.log(
+                "Firebase Ready"
+            );
+
+            refreshRunList();
+
+            setInterval(
+                update,
+                50
+            );
+
+        }
+        else{
+
+            console.log(
+                "Waiting for Firebase..."
+            );
+
+            setTimeout(
+                waitForFirebase,
+                100
+            );
+        }
+    }
+
+    waitForFirebase();
+
+});
 </script>
 
 </body>
