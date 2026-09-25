@@ -56,6 +56,11 @@ button{
 
 <h1>Interactive Drone MPC Gain Tuning Demo</h1>
 
+<p>
+Click anywhere in the flight area to move the target waypoint.
+Observe how different MPC settings change the flight path.
+</p>
+
 <div class="container">
 
 <div class="controls">
@@ -120,9 +125,10 @@ let y = 1;
 let vx = 0;
 let vy = 0;
 
+
 // Target
-const targetX = 10;
-const targetY = 10;
+let targetX = 10;
+let targetY = 10;
 
 // Display
 let lastU = 0;
@@ -130,6 +136,9 @@ let lastU = 0;
 // Altitude graph
 let altitudeHistory = [];
 const maxHistory = 300;
+
+let droneTrail = [];
+const maxTrail = 500;
 
 // Sliders
 const qSlider = document.getElementById("Q");
@@ -151,6 +160,34 @@ nSlider.oninput = updateLabels;
 
 updateLabels();
 
+
+canvas.addEventListener("click", function(event){
+
+    const rect = canvas.getBoundingClientRect();
+
+    const mouseX = event.clientX - rect.left;
+    const mouseY = event.clientY - rect.top;
+
+    const worldX = 80;
+    const worldY = 50;
+    const worldW = 700;
+    const worldH = 220;
+
+    if(
+        mouseX >= worldX &&
+        mouseX <= worldX + worldW &&
+        mouseY >= worldY &&
+        mouseY <= worldY + worldH
+    ){
+
+        targetX =
+            ((mouseX - worldX) / worldW) * 12;
+
+        targetY =
+            12 -
+            ((mouseY - worldY) / worldH) * 12;
+    }
+});
 function resetSim(){
 
     x = 1;
@@ -160,6 +197,8 @@ function resetSim(){
     vy = 0;
 
     altitudeHistory = [];
+    droneTrail = [];
+
     lastU = 0;
 }
 
@@ -312,7 +351,29 @@ function draw(){
         ctx.lineTo(worldX+worldW,gy);
         ctx.stroke();
     }
+    //----------------------------------
+    // Drone Trail
+    //----------------------------------
 
+    ctx.strokeStyle = "rgba(30,144,255,0.6)";
+    ctx.lineWidth = 2;
+
+    ctx.beginPath();
+
+    for(let i=0;i<droneTrail.length;i++){
+
+    const trailX = mapX(droneTrail[i].x);
+    const trailY = mapY(droneTrail[i].y);
+
+    if(i===0){
+        ctx.moveTo(trailX,trailY);
+    }
+    else{
+        ctx.lineTo(trailX,trailY);
+    }
+}
+
+ctx.stroke();
     // Target
     const tx = mapX(targetX);
     const ty = mapY(targetY);
@@ -435,6 +496,15 @@ function update(){
 
     x += vx * dt;
     y += vy * dt;
+
+    droneTrail.push({
+    x:x,
+    y:y
+});
+
+if(droneTrail.length > maxTrail){
+    droneTrail.shift();
+}
 
     x = Math.max(0, Math.min(12, x));
     y = Math.max(0, Math.min(12, y));
